@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import requests
@@ -8,9 +7,9 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from telethon import TelegramClient
 
 # Настройки
-TOKEN = "8126215351:AAGOeoRejXzVOYk5n1R1BBOOevz4fbZHm9E" # 🔴 Укажите свой токен бота
-API_ID = "22027112"
-API_HASH = "b5a2066fdf4618c019aa8e0ac7912b2c"
+TOKEN = "8126215351:AAGOeoRejXzVOYk5n1R1BBOOevz4fbZHm9E"  # Укажите свой токен
+API_ID = "27128533"
+API_HASH = "98e674b2f11b7a6f1ca10a5e1595cc44"
 
 BASE_URL = "https://fakedocs.online/"
 RESERVE_URL = "https://fakedocs.online/rezerv/"
@@ -29,11 +28,15 @@ async def get_telegram_id(username):
     """Преобразование username в Telegram ID"""
     async with tg_client:
         try:
+            await tg_client.connect()  # Обеспечиваем соединение
             user = await tg_client.get_entity(username)
             return str(user.id)
         except Exception as e:
             logging.warning(f"Ошибка при получении ID для {username}: {e}")
             return None
+        finally:
+            if tg_client.is_connected():
+                await tg_client.disconnect()  # Отключаемся после использования
 
 def check_user_folder(tg_id):
     """Проверка наличия данных на двух источниках"""
@@ -41,13 +44,17 @@ def check_user_folder(tg_id):
     results = []
     
     for url in urls:
-        try:
-            response = requests.head(url)
-            if response.status_code != 404:
-                results.append(url)
-        except requests.RequestException as e:
-            logging.warning(f"Ошибка при проверке {url}: {e}")
-
+        retries = 3
+        for _ in range(retries):
+            try:
+                response = requests.head(url)
+                if response.status_code != 404:
+                    results.append(url)
+                break  # Если успешно, выходим из цикла
+            except requests.RequestException as e:
+                logging.warning(f"Ошибка при проверке {url}: {e}")
+                time.sleep(2)  # Задержка перед повторной попыткой
+                    
     return results
 
 async def process_user(username):
@@ -62,13 +69,13 @@ async def process_user(username):
     
     if existing_folders:
         text = f"✅ *{username}* (ID: `{tg_id}`) найден:\n"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[])  # Пустая клавиатура
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
 
         for folder in existing_folders:
             text += f"🔗 [{folder}]({folder})\n"
             keyboard.inline_keyboard.append([InlineKeyboardButton(text="📂 Открыть", url=folder)])
 
-        return text, keyboard if keyboard.inline_keyboard else None  # Проверка, есть ли кнопки
+        return text, keyboard if keyboard.inline_keyboard else None
     
     return f"⚠️ *{username}* (ID: `{tg_id}`) - _данные не найдены_", None
 
@@ -81,15 +88,20 @@ async def handle_usernames(message: Message):
     """Обрабатывает введённые username"""
     usernames = message.text.split("\n")  # Разделяем список
 
-    tasks = [process_user(username) for username in usernames if username.strip()]
-    results = await asyncio.gather(*tasks)  # Выполняем все запросы одновременно
+    results = []
+    # Обрабатываем пользователей по очереди
+    for username in usernames:
+        if username.strip():
+            result = await process_user(username)
+            if isinstance(result, tuple):
+                text, keyboard = result
+                results.append(f"{text}\n")
+            else:
+                results.append(result + "\n")
+    
+    # Отправляем общий результат
+    await message.answer("\n".join(results), parse_mode="Markdown")
 
-    for result in results:
-        if isinstance(result, tuple):
-            text, keyboard = result
-            await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
-        else:
-            await message.answer(result, parse_mode="Markdown")
 
 async def main():
     """Запуск бота"""
